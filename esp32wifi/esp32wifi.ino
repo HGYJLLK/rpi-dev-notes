@@ -1,14 +1,45 @@
-// ESP32 WiFi Web Serial Monitor
+// ESP32-CAM WiFi Dashboard with Camera Monitoring
 // Access via: http://<ESP32-IP>/
 
+#include "esp_camera.h"
 #include <WiFi.h>
 #include <WebServer.h>
+
+// Configuration
+#define ENABLE_CAMERA true  // Set to false to disable camera
 
 // WiFi credentials
 const char* ssid = "GEEK2.4G";
 const char* password = "34163416";
 
+// Camera pins for AI-THINKER ESP32-CAM
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+
+// LED pins
+#define LED_FLASH_GPIO     4
+#define LED_RED_GPIO      33
+
 WebServer server(80);
+
+// Camera status
+bool cameraInitialized = false;
+int captureSuccessCount = 0;
+int captureFailCount = 0;
 
 // Buffer for serial messages
 #define MAX_MESSAGES 50
@@ -21,12 +52,39 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println("\n\nESP32 Web Serial Monitor Starting...");
+  Serial.println("\n\nESP32-CAM Dashboard Starting...");
+
+  // Setup LED pins
+  pinMode(LED_FLASH_GPIO, OUTPUT);
+  pinMode(LED_RED_GPIO, OUTPUT);
+  digitalWrite(LED_FLASH_GPIO, LOW);
+  digitalWrite(LED_RED_GPIO, HIGH);  // Red on during init
 
   // Initialize message buffer
   for(int i = 0; i < MAX_MESSAGES; i++) {
     serialMessages[i][0] = '\0';
   }
+
+  // Initialize camera (optional)
+  #if ENABLE_CAMERA
+    Serial.println("Initializing camera...");
+    if (initCamera()) {
+      Serial.println("Camera initialized successfully!");
+      addMessage("Camera: OK");
+      cameraInitialized = true;
+      digitalWrite(LED_RED_GPIO, LOW);
+      digitalWrite(LED_FLASH_GPIO, HIGH);  // White LED on = camera OK
+    } else {
+      Serial.println("Camera init failed!");
+      addMessage("Camera: FAILED");
+      cameraInitialized = false;
+      digitalWrite(LED_RED_GPIO, HIGH);  // Red LED stays on = failed
+    }
+  #else
+    Serial.println("Camera disabled in config");
+    addMessage("Camera: DISABLED");
+    digitalWrite(LED_RED_GPIO, LOW);
+  #endif
 
   // Connect to WiFi
   Serial.print("Connecting to WiFi: ");
@@ -43,9 +101,7 @@ void setup() {
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\nWiFi connected!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("Web Serial: http://");
+    Serial.print("Dashboard URL: http://");
     Serial.println(WiFi.localIP());
 
     addMessage("WiFi connected!");
@@ -60,8 +116,10 @@ void setup() {
 
   // Setup web server routes
   server.on("/", handleRoot);
+  server.on("/status", handleStatus);
+  server.on("/camera", handleCamera);
+  server.on("/camera/test", handleCameraTest);
   server.on("/messages", handleMessages);
-  server.on("/send", HTTP_POST, handleSend);
 
   server.begin();
   Serial.println("Web server started!");
@@ -71,35 +129,28 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  // Read serial input and add to buffer
-  if (Serial.available()) {
-    static char inputBuffer[MAX_MESSAGE_LENGTH];
-    static int bufferPos = 0;
+  // Test camera capture every 5 seconds
+  static unsigned long lastCapture = 0;
+  if (cameraInitialized && millis() - lastCapture > 5000) {
+    lastCapture = millis();
 
-    while (Serial.available()) {
-      char c = Serial.read();
-      if (c == '\n' || c == '\r') {
-        if (bufferPos > 0) {
-          inputBuffer[bufferPos] = '\0';
-          addMessage(inputBuffer);
-          Serial.println(inputBuffer); // Echo back
-          bufferPos = 0;
-        }
-      } else if (bufferPos < MAX_MESSAGE_LENGTH - 1) {
-        inputBuffer[bufferPos++] = c;
-      }
+    camera_fb_t * fb = esp_camera_fb_get();
+    if (fb) {
+      captureSuccessCount++;
+      esp_camera_fb_return(fb);
+
+      // Quick flash to indicate capture success
+      digitalWrite(LED_FLASH_GPIO, LOW);
+      delay(100);
+      digitalWrite(LED_FLASH_GPIO, HIGH);
+    } else {
+      captureFailCount++;
+
+      // Red blink to indicate capture failure
+      digitalWrite(LED_RED_GPIO, HIGH);
+      delay(200);
+      digitalWrite(LED_RED_GPIO, LOW);
     }
-  }
-
-  // Send test message every 10 seconds
-  static unsigned long lastTest = 0;
-  if (millis() - lastTest > 10000) {
-    lastTest = millis();
-
-    char testMsg[MAX_MESSAGE_LENGTH];
-    snprintf(testMsg, MAX_MESSAGE_LENGTH, "Uptime: %lu s | Heap: %d bytes",
-             millis()/1000, ESP.getFreeHeap());
-    addMessage(testMsg);
   }
 }
 
@@ -114,6 +165,62 @@ void addMessage(const char* message) {
   }
 }
 
+bool initCamera() {
+  // Power cycle camera
+  pinMode(PWDN_GPIO_NUM, OUTPUT);
+  digitalWrite(PWDN_GPIO_NUM, HIGH);
+  delay(100);
+  digitalWrite(PWDN_GPIO_NUM, LOW);
+  delay(100);
+
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 10000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_QVGA;  // 320x240
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+  config.fb_location = CAMERA_FB_IN_PSRAM;
+  config.grab_mode = CAMERA_GRAB_LATEST;
+
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed: 0x%x\n", err);
+    return false;
+  }
+
+  // Configure sensor settings
+  sensor_t * s = esp_camera_sensor_get();
+  if (s != NULL) {
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 0);
+    s->set_saturation(s, 0);
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_gain_ctrl(s, 1);
+  }
+
+  return true;
+}
+
 void handleRoot() {
   String html = R"rawliteral(
 <!DOCTYPE html>
@@ -121,179 +228,206 @@ void handleRoot() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32 Web Serial</title>
+  <title>ESP32-CAM Dashboard</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: 'Courier New', monospace;
-      background: #1e1e1e;
-      color: #d4d4d4;
-      padding: 20px;
-    }
-    .container {
-      max-width: 1000px;
-      margin: 0 auto;
-    }
-    h1 {
-      color: #4ec9b0;
-      margin-bottom: 20px;
-      font-size: 24px;
-    }
-    .info {
-      background: #252526;
-      padding: 15px;
-      border-radius: 5px;
-      margin-bottom: 20px;
-      border-left: 3px solid #4ec9b0;
-    }
-    .info p { margin: 5px 0; }
-    .serial-monitor {
-      background: #1e1e1e;
-      border: 2px solid #3c3c3c;
-      border-radius: 5px;
-      padding: 15px;
-      height: 400px;
-      overflow-y: auto;
-      font-size: 14px;
-      margin-bottom: 15px;
-    }
-    .serial-monitor::-webkit-scrollbar {
-      width: 10px;
-    }
-    .serial-monitor::-webkit-scrollbar-track {
-      background: #252526;
-    }
-    .serial-monitor::-webkit-scrollbar-thumb {
-      background: #3c3c3c;
-      border-radius: 5px;
-    }
-    .message {
-      margin: 5px 0;
-      padding: 5px;
-      border-left: 2px solid #007acc;
-    }
-    .input-area {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 15px;
-    }
-    input[type="text"] {
-      flex: 1;
-      padding: 12px;
-      background: #252526;
-      border: 1px solid #3c3c3c;
-      color: #d4d4d4;
-      border-radius: 5px;
-      font-family: 'Courier New', monospace;
-      font-size: 14px;
-    }
-    input[type="text"]:focus {
-      outline: none;
-      border-color: #007acc;
-    }
-    button {
-      padding: 12px 24px;
-      background: #0e639c;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: bold;
-    }
-    button:hover {
-      background: #1177bb;
-    }
-    button:active {
-      background: #007acc;
-    }
-    .controls {
-      display: flex;
-      gap: 10px;
-    }
+    body { font-family: Arial; background: #2c3e50; color: white; padding: 20px; margin: 0; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 30px; }
+    .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
+    .card { background: #34495e; border-radius: 10px; padding: 20px; }
+    .card-title { font-size: 14px; color: #bdc3c7; margin-bottom: 10px; }
+    .card-value { font-size: 32px; font-weight: bold; }
+    .card-unit { font-size: 16px; color: #95a5a6; }
+    .status-ok { color: #2ecc71; }
+    .status-fail { color: #e74c3c; }
+    .camera-card { grid-column: 1 / -1; }
+    .camera-container { text-align: center; background: #2c3e50; padding: 15px; margin-top: 10px; border-radius: 8px; }
+    .camera-image { max-width: 100%; border-radius: 5px; }
+    .refresh-btn { background: #3498db; color: white; border: none; padding: 10px 25px; border-radius: 5px; cursor: pointer; margin-top: 10px; }
+    .refresh-btn:hover { background: #2980b9; }
+    .stats-row { display: flex; justify-content: space-around; margin-top: 10px; padding-top: 10px; border-top: 1px solid #7f8c8d; }
+    .stat-value { font-size: 20px; font-weight: bold; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>ESP32 Web Serial Monitor</h1>
+    <h1>ESP32-CAM Dashboard</h1>
 
-    <div class="info">
-      <p><strong>Status:</strong> <span id="status">Connected</span></p>
-      <p><strong>IP:</strong> )rawliteral" + WiFi.localIP().toString() + R"rawliteral(</p>
-      <p><strong>Free Heap:</strong> <span id="heap">)rawliteral" + String(ESP.getFreeHeap()) + R"rawliteral(</span> bytes</p>
-    </div>
+    <div class="dashboard">
+      <div class="card">
+        <div class="card-title">Uptime</div>
+        <div class="card-value" id="uptime">0<span class="card-unit">s</span></div>
+      </div>
 
-    <div class="serial-monitor" id="monitor"></div>
+      <div class="card">
+        <div class="card-title">Free Heap</div>
+        <div class="card-value" id="heap">0<span class="card-unit">B</span></div>
+      </div>
 
-    <div class="input-area">
-      <input type="text" id="input" placeholder="Type message and press Enter...">
-      <button onclick="sendMessage()">Send</button>
-    </div>
+      <div class="card">
+        <div class="card-title">Camera Status</div>
+        <div class="card-value" id="camera-status">--</div>
+        <div class="stats-row">
+          <div class="stat-item">
+            <div class="stat-label">Success</div>
+            <div class="stat-value status-ok" id="success-count">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Failed</div>
+            <div class="stat-value status-fail" id="fail-count">0</div>
+          </div>
+        </div>
+        <button class="refresh-btn" onclick="testCamera()" style="margin-top:15px;width:100%;">Test Camera</button>
+      </div>
 
-    <div class="controls">
-      <button onclick="clearMonitor()">Clear</button>
-      <button onclick="location.reload()">Refresh</button>
+      <div class="card camera-card">
+        <div class="card-title">Camera Feed</div>
+        <div class="camera-container">
+          <img id="camera-img" class="camera-image" src="/camera" alt="Camera feed">
+          <br>
+          <button class="refresh-btn" onclick="refreshCamera()">Refresh Image</button>
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
-    let autoScroll = true;
-
-    function updateMessages() {
-      fetch('/messages')
+    function updateStatus() {
+      fetch('/status')
         .then(response => response.json())
         .then(data => {
-          const monitor = document.getElementById('monitor');
-          monitor.innerHTML = '';
-          data.messages.forEach(msg => {
-            const div = document.createElement('div');
-            div.className = 'message';
-            div.textContent = msg;
-            monitor.appendChild(div);
-          });
-          if (autoScroll) {
-            monitor.scrollTop = monitor.scrollHeight;
+          document.getElementById('uptime').innerHTML = data.uptime + '<span class="card-unit">s</span>';
+          document.getElementById('heap').innerHTML = data.heap + '<span class="card-unit">B</span>';
+
+          const cameraStatus = document.getElementById('camera-status');
+          if (data.cameraOk) {
+            cameraStatus.textContent = 'OK';
+            cameraStatus.className = 'card-value status-ok';
+          } else {
+            cameraStatus.textContent = 'FAILED';
+            cameraStatus.className = 'card-value status-fail';
           }
-          document.getElementById('heap').textContent = data.heap;
+
+          document.getElementById('success-count').textContent = data.captureSuccess;
+          document.getElementById('fail-count').textContent = data.captureFail;
         })
         .catch(err => console.error('Error:', err));
     }
 
-    function sendMessage() {
-      const input = document.getElementById('input');
-      const message = input.value.trim();
-      if (message) {
-        fetch('/send', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-          body: 'msg=' + encodeURIComponent(message)
+    function refreshCamera() {
+      const img = document.getElementById('camera-img');
+      img.src = '/camera?t=' + new Date().getTime();
+    }
+
+    function testCamera() {
+      fetch('/camera/test')
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            alert('Camera Test SUCCESS!\nImage size: ' + data.size + ' bytes\nResolution: ' + data.width + 'x' + data.height);
+            refreshCamera();
+          } else {
+            alert('Camera Test FAILED!\nError: ' + data.error);
+          }
+          setTimeout(updateStatus, 500);
         })
-        .then(() => {
-          input.value = '';
-          setTimeout(updateMessages, 100);
-        });
-      }
+        .catch(err => alert('Camera test error: ' + err));
     }
 
-    function clearMonitor() {
-      document.getElementById('monitor').innerHTML = '';
-    }
+    // Update status every 2 seconds
+    setInterval(updateStatus, 2000);
+    updateStatus();
 
-    document.getElementById('input').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        sendMessage();
-      }
-    });
-
-    // Update every 1 second
-    setInterval(updateMessages, 1000);
-    updateMessages();
+    // Auto-refresh camera every 5 seconds
+    setInterval(refreshCamera, 5000);
   </script>
 </body>
 </html>
 )rawliteral";
 
   server.send(200, "text/html", html);
+}
+
+void handleStatus() {
+  String json = "{";
+  json += "\"uptime\":" + String(millis() / 1000) + ",";
+  json += "\"heap\":" + String(ESP.getFreeHeap()) + ",";
+  json += "\"cameraOk\":" + String(cameraInitialized ? "true" : "false") + ",";
+  json += "\"captureSuccess\":" + String(captureSuccessCount) + ",";
+  json += "\"captureFail\":" + String(captureFailCount);
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void handleCamera() {
+  if (!cameraInitialized) {
+    server.send(503, "text/plain", "Camera not initialized");
+    return;
+  }
+
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("Camera capture failed");
+    server.send(500, "text/plain", "Camera capture failed");
+    return;
+  }
+
+  server.sendHeader("Content-Disposition", "inline; filename=camera.jpg");
+  server.send_P(200, "image/jpeg", (const char *)fb->buf, fb->len);
+
+  esp_camera_fb_return(fb);
+}
+
+void handleCameraTest() {
+  String json = "{";
+
+  if (!cameraInitialized) {
+    json += "\"success\":false,";
+    json += "\"error\":\"Camera not initialized\"";
+    json += "}";
+    server.send(200, "application/json", json);
+    return;
+  }
+
+  Serial.println("Web camera test triggered...");
+  camera_fb_t * fb = esp_camera_fb_get();
+
+  if (!fb) {
+    Serial.println("Camera test capture failed!");
+    captureFailCount++;
+
+    json += "\"success\":false,";
+    json += "\"error\":\"Capture failed - check power supply\"";
+    json += "}";
+
+    // Red LED blink
+    digitalWrite(LED_RED_GPIO, HIGH);
+    delay(200);
+    digitalWrite(LED_RED_GPIO, LOW);
+  } else {
+    Serial.println("Camera test capture SUCCESS!");
+    Serial.print("Image size: ");
+    Serial.print(fb->len);
+    Serial.println(" bytes");
+
+    captureSuccessCount++;
+
+    json += "\"success\":true,";
+    json += "\"size\":" + String(fb->len) + ",";
+    json += "\"width\":" + String(fb->width) + ",";
+    json += "\"height\":" + String(fb->height);
+    json += "}";
+
+    esp_camera_fb_return(fb);
+
+    // White LED flash
+    digitalWrite(LED_FLASH_GPIO, LOW);
+    delay(100);
+    digitalWrite(LED_FLASH_GPIO, HIGH);
+  }
+
+  server.send(200, "application/json", json);
 }
 
 void handleMessages() {
@@ -314,21 +448,4 @@ void handleMessages() {
   json += "}";
 
   server.send(200, "application/json", json);
-}
-
-void handleSend() {
-  if (server.hasArg("msg")) {
-    String message = server.arg("msg");
-
-    char msgBuffer[MAX_MESSAGE_LENGTH];
-    snprintf(msgBuffer, MAX_MESSAGE_LENGTH, "Web> %s", message.c_str());
-    addMessage(msgBuffer);
-
-    Serial.print("Web> ");
-    Serial.println(message);
-
-    server.send(200, "text/plain", "OK");
-  } else {
-    server.send(400, "text/plain", "Missing message");
-  }
 }
