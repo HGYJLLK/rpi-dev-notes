@@ -190,6 +190,34 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="batch-buttons">
           <button class="btn" style="background:#ff9800; padding:10px 30px;" onclick="resetAll()">全部归零</button>
           <button class="btn" style="background:#9c27b0; padding:10px 30px; margin-left:10px;" onclick="centerAll()">全部居中</button>
+
+          <div style="margin-top:15px;">
+            <input type="number" id="allAngle" min="0" max="270" value="135" style="width:70px; padding:8px; font-size:14px;">
+            <button class="btn" style="background:#2196F3; padding:10px 30px; margin-left:10px;" onclick="setAllAngle()">全部转到同角度</button>
+          </div>
+
+          <div style="margin-top:15px; padding-top:15px; border-top:1px solid #ddd;">
+            <div style="font-weight:bold; margin-bottom:10px;">分别设定角度并同时执行：</div>
+            <div style="display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap;">
+              <div>
+                <label style="font-size:12px;">舵机0:</label>
+                <input type="number" id="batch0" min="0" max="270" value="135" style="width:60px; padding:5px;">
+              </div>
+              <div>
+                <label style="font-size:12px;">舵机1:</label>
+                <input type="number" id="batch1" min="0" max="270" value="135" style="width:60px; padding:5px;">
+              </div>
+              <div>
+                <label style="font-size:12px;">舵机2:</label>
+                <input type="number" id="batch2" min="0" max="270" value="135" style="width:60px; padding:5px;">
+              </div>
+              <div>
+                <label style="font-size:12px;">舵机3:</label>
+                <input type="number" id="batch3" min="0" max="270" value="135" style="width:60px; padding:5px;">
+              </div>
+            </div>
+            <button class="btn" style="background:#00bcd4; padding:10px 30px; margin-top:10px;" onclick="batchSetAll()">同时执行</button>
+          </div>
         </div>
       </div>
 
@@ -276,6 +304,50 @@ const char index_html[] PROGMEM = R"rawliteral(
     function centerAll() {
       for (let i = 0; i < 4; i++) {
         fetch('/set?servo=' + i + '&angle=135')
+          .then(response => response.json())
+          .then(data => {
+            if (data.angle !== undefined) {
+              angles[data.servo] = data.angle;
+              document.getElementById('angle' + data.servo).textContent = data.angle + '°';
+              document.getElementById('input' + data.servo).value = data.angle;
+            }
+          });
+      }
+    }
+
+    function setAllAngle() {
+      var angle = parseInt(document.getElementById('allAngle').value);
+      if (angle < 0 || angle > 270) {
+        alert('角度必须在0-270度之间');
+        return;
+      }
+      for (let i = 0; i < 4; i++) {
+        fetch('/set?servo=' + i + '&angle=' + angle)
+          .then(response => response.json())
+          .then(data => {
+            if (data.angle !== undefined) {
+              angles[data.servo] = data.angle;
+              document.getElementById('angle' + data.servo).textContent = data.angle + '°';
+              document.getElementById('input' + data.servo).value = data.angle;
+            }
+          });
+      }
+    }
+
+    function batchSetAll() {
+      var batchAngles = [];
+      for (let i = 0; i < 4; i++) {
+        var angle = parseInt(document.getElementById('batch' + i).value);
+        if (angle < 0 || angle > 270) {
+          alert('舵机' + i + '的角度必须在0-270度之间');
+          return;
+        }
+        batchAngles.push(angle);
+      }
+
+      // 同时发送所有请求
+      for (let i = 0; i < 4; i++) {
+        fetch('/set?servo=' + i + '&angle=' + batchAngles[i])
           .then(response => response.json())
           .then(data => {
             if (data.angle !== undefined) {
