@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RPi5 摄像头控制</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #111;
+      color: #eee;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 24px 16px;
+      gap: 20px;
+    }
+    h1 { font-size: 1.1rem; color: #aaa; letter-spacing: 2px; }
+
+    /* 画面 */
+    #stream {
+      width: 100%;
+      max-width: 720px;
+      border-radius: 10px;
+      border: 2px solid #333;
+      background: #000;
+      display: block;
+    }
+
+    /* 控制区 */
+    .panel {
+      width: 100%;
+      max-width: 720px;
+      background: #1c1c1c;
+      border-radius: 10px;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    label { min-width: 60px; color: #aaa; font-size: 0.9rem; }
+
+    /* 滑块 */
+    input[type=range] {
+      flex: 1;
+      accent-color: #4af;
+      height: 6px;
+      cursor: pointer;
+    }
+    #angle-display {
+      min-width: 52px;
+      text-align: right;
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #4af;
+    }
+
+    /* 快捷按钮 */
+    .btn-row {
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      flex: 1;
+      padding: 10px 0;
+      border: none;
+      border-radius: 7px;
+      background: #2a2a2a;
+      color: #eee;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    button:hover  { background: #3a3a3a; }
+    button:active { background: #4af; color: #111; }
+    button.center { background: #1e3a50; }
+    button.center:hover { background: #2a5070; }
+
+    /* 状态 */
+    #status { font-size: 0.8rem; color: #555; text-align: right; }
+  </style>
+</head>
+<body>
+  <h1>RPi5 · 摄像头控制</h1>
+
+  <img id="stream" src="/video_feed" alt="camera">
+
+  <div class="panel">
+    <div class="row">
+      <label>角度</label>
+      <input type="range" id="slider" min="0" max="{{ servo_max }}" value="{{ angle }}" step="1">
+      <span id="angle-display">{{ angle }}°</span>
+    </div>
+
+    <div class="btn-row">
+      <button onclick="sendAngle(0)">◀ 0°</button>
+      <button class="center" onclick="sendAngle({{ servo_max // 2 }})">居中 {{ servo_max // 2 }}°</button>
+      <button onclick="sendAngle({{ servo_max }})">{{ servo_max }}° ▶</button>
+    </div>
+
+    <span id="status">就绪</span>
+  </div>
+
+  <script>
+    const slider  = document.getElementById('slider');
+    const display = document.getElementById('angle-display');
+    const status  = document.getElementById('status');
+
+    let debounceTimer = null;
+
+    slider.addEventListener('input', () => {
+      display.textContent = slider.value + '°';
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => sendAngle(slider.value), 80);
+    });
+
+    function sendAngle(angle) {
+      angle = Math.round(angle);
+      slider.value       = angle;
+      display.textContent = angle + '°';
+      status.textContent  = '发送中…';
+
+      fetch('/servo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ angle })
+      })
+      .then(r => r.json())
+      .then(d => { status.textContent = `已设置: ${d.angle}°`; })
+      .catch(() => { status.textContent = '发送失败'; });
+    }
+  </script>
+</body>
+</html>

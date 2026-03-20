@@ -16,9 +16,15 @@ SERVO_CHANNELS = {
     "servo_1": 1,             # 1号通道 (已接舵机)
 }
 
-# 舵机 PWM 脉宽范围 (单位: 微秒)
-SERVO_MIN_US = 500
-SERVO_MAX_US = 2500
+# 舵机参数 (270° 舵机)
+SERVO_RANGE_DEG = 270
+SERVO_MIN_US    = 500
+SERVO_MAX_US    = 2500
+SERVO_CENTER    = 135   # 默认居中位置
+
+# ── Web 服务 ──────────────────────────────────────
+SERVER_HOST = "0.0.0.0"
+SERVER_PORT = 5000
 
 # ── 摄像头 ────────────────────────────────────────
 CAMERA_INDEX  = 0             # /dev/video0
