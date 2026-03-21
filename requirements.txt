@@ -1,3 +1,4 @@
 flask
 opencv-python-headless
+picamera2
 adafruit-circuitpython-servokit

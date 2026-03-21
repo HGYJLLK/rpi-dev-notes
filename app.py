@@ -1,41 +1,32 @@
+import io
 import threading
 import cv2
 from flask import Flask, Response, render_template, request, jsonify
+from picamera2 import Picamera2
 from adafruit_servokit import ServoKit
 import config
 
 app = Flask(__name__)
 
-# ── 摄像头 ────────────────────────────────────────
-camera = cv2.VideoCapture(config.CAMERA_INDEX)
-camera.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAMERA_WIDTH)
-camera.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
-camera.set(cv2.CAP_PROP_FPS,          config.CAMERA_FPS)
-
-_frame_lock   = threading.Lock()
-_current_frame = None
-
-def _capture_loop():
-    global _current_frame
-    while True:
-        ret, frame = camera.read()
-        if ret:
-            with _frame_lock:
-                _current_frame = frame
+# ── 摄像头 (CSI, picamera2) ───────────────────────
+picam = Picamera2()
+picam.configure(picam.create_video_configuration(
+    main={"size": (config.CAMERA_WIDTH, config.CAMERA_HEIGHT), "format": "RGB888"}
+))
+picam.start()
 
 def _generate_mjpeg():
     while True:
-        with _frame_lock:
-            if _current_frame is None:
-                continue
-            ret, buf = cv2.imencode('.jpg', _current_frame,
-                                    [cv2.IMWRITE_JPEG_QUALITY, 75])
+        frame = picam.capture_array()
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        frame_bgr = cv2.rotate(frame_bgr, cv2.ROTATE_180)
+        ret, buf = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 75])
         if ret:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n'
                    + buf.tobytes() + b'\r\n')
 
-# ── PCA9685 舵机 ──────────────────────────────────
+# ── PCA9685 舵机 (I2C bus 1, addr 0x40) ──────────
 kit   = ServoKit(channels=16)
 servo = kit.servo[config.SERVO_CHANNELS["servo_1"]]
 servo.actuation_range = config.SERVO_RANGE_DEG
@@ -68,6 +59,4 @@ def set_servo():
 
 # ── 启动 ──────────────────────────────────────────
 if __name__ == '__main__':
-    t = threading.Thread(target=_capture_loop, daemon=True)
-    t.start()
     app.run(host=config.SERVER_HOST, port=config.SERVER_PORT, threaded=True)

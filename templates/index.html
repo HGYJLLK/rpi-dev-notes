@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>RPi5 摄像头控制</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -100,9 +100,9 @@
     </div>
 
     <div class="btn-row">
-      <button onclick="sendAngle(0)">◀ 0°</button>
-      <button class="center" onclick="sendAngle({{ servo_max // 2 }})">居中 {{ servo_max // 2 }}°</button>
-      <button onclick="sendAngle({{ servo_max }})">{{ servo_max }}° ▶</button>
+      <button onclick="step(10)">◀ -10°</button>
+      <button class="center" onclick="sendAngle({{ servo_max // 2 }})">居中</button>
+      <button onclick="step(-10)">+10° ▶</button>
     </div>
 
     <span id="status">就绪</span>
@@ -120,6 +120,11 @@
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => sendAngle(slider.value), 80);
     });
+
+    function step(delta) {
+      const max = parseInt(slider.max);
+      sendAngle(Math.min(max, Math.max(0, parseInt(slider.value) + delta)));
+    }
 
     function sendAngle(angle) {
       angle = Math.round(angle);
